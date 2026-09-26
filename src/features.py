@@ -144,6 +144,27 @@ def extract_features(df_pairs, df_s1, df_targets, batch_size=100000):
     addr_exact = np.zeros(n_samples, dtype=np.int8)
 
     # ------------------------------------------------------------------
+    # 5.5. Pre-tokenize all strings
+    # ------------------------------------------------------------------
+    print("Pre-tokenizing names and addresses...")
+    s1_name_tokens_all = {
+        eid: set(name.split())
+        for eid, name in s1_name_map.items() if name
+    }
+    s1_addr_tokens_all = {
+        eid: set(addr.split())
+        for eid, addr in s1_addr_map.items() if addr
+    }
+    target_name_tokens_all = {
+        eid: set(name.split())
+        for eid, name in target_name_map.items() if name
+    }
+    target_addr_tokens_all = {
+        eid: set(addr.split())
+        for eid, addr in target_addr_map.items() if addr
+    }
+
+    # ------------------------------------------------------------------
     # 6. Process candidate pairs in batches
     # ------------------------------------------------------------------
     print(
@@ -157,39 +178,8 @@ def extract_features(df_pairs, df_s1, df_targets, batch_size=100000):
     ):
         end = min(start + batch_size, n_samples)
 
-        # Only construct token sets for entities used by THIS batch.
         batch_s1_ids = s1_ids[start:end]
         batch_target_ids = target_ids[start:end]
-
-        unique_batch_s1 = pd.unique(batch_s1_ids)
-        unique_batch_target = pd.unique(batch_target_ids)
-
-        # --------------------------------------------------------------
-        # Token sets for current batch only
-        # --------------------------------------------------------------
-        s1_name_tokens = {
-            eid: set(s1_name_map[eid].split())
-            for eid in unique_batch_s1
-            if s1_name_map.get(eid)
-        }
-
-        s1_addr_tokens = {
-            eid: set(s1_addr_map[eid].split())
-            for eid in unique_batch_s1
-            if s1_addr_map.get(eid)
-        }
-
-        target_name_tokens = {
-            eid: set(target_name_map[eid].split())
-            for eid in unique_batch_target
-            if target_name_map.get(eid)
-        }
-
-        target_addr_tokens = {
-            eid: set(target_addr_map[eid].split())
-            for eid in unique_batch_target
-            if target_addr_map.get(eid)
-        }
 
         # --------------------------------------------------------------
         # Pairwise calculations
@@ -233,8 +223,8 @@ def extract_features(df_pairs, df_s1, df_targets, batch_size=100000):
                     len(s1_n) - len(t_n)
                 )
 
-                set1 = s1_name_tokens.get(s1_id, set())
-                set2 = target_name_tokens.get(t_id, set())
+                set1 = s1_name_tokens_all.get(s1_id, set())
+                set2 = target_name_tokens_all.get(t_id, set())
 
                 union = set1 | set2
 
@@ -279,8 +269,8 @@ def extract_features(df_pairs, df_s1, df_targets, batch_size=100000):
                     len(s1_a) - len(t_a)
                 )
 
-                set1 = s1_addr_tokens.get(s1_id, set())
-                set2 = target_addr_tokens.get(t_id, set())
+                set1 = s1_addr_tokens_all.get(s1_id, set())
+                set2 = target_addr_tokens_all.get(t_id, set())
 
                 union = set1 | set2
 
@@ -298,15 +288,8 @@ def extract_features(df_pairs, df_s1, df_targets, batch_size=100000):
                 )
 
         # --------------------------------------------------------------
-        # Free batch token sets immediately
+        # (Batch token sets del block removed)
         # --------------------------------------------------------------
-        del (
-            s1_name_tokens,
-            s1_addr_tokens,
-            target_name_tokens,
-            target_addr_tokens
-        )
-
         gc.collect()
 
     # ------------------------------------------------------------------

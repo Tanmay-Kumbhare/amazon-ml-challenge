@@ -181,7 +181,7 @@ def generate_candidates(
         gc.collect()
 
         # -------------------------------------------------
-        # Streaming double-chunked retrieval
+        # Streaming single-chunked retrieval
         # -------------------------------------------------
 
         n_s1 = len(s1_texts)
@@ -200,40 +200,35 @@ def generate_candidates(
             f"  Streaming: {n_s1_chunks} S1 chunk(s) "
             f"× {n_target_chunks} target chunk(s)"
         )
+        print("  Pre-transforming S1 entities...")
 
+        s1_matrices = []
         for s1_start in range(0, n_s1, s1_chunk_size):
             s1_end = min(s1_start + s1_chunk_size, n_s1)
-            s1_chunk_texts = s1_texts[s1_start:s1_end]
-            s1_chunk_ids = s1_ids[s1_start:s1_end]
-            chunk_len = s1_end - s1_start
+            s1_matrices.append(vectorizer.transform(s1_texts[s1_start:s1_end]))
 
-            # Transform this S1 chunk
-            s1_matrix = vectorizer.transform(s1_chunk_texts)
+        # Initialize global top-K accumulators for ALL S1 entities
+        best_indices = [np.empty(0, dtype=np.int64) for _ in range(n_s1)]
+        best_scores = [np.empty(0, dtype=np.float32) for _ in range(n_s1)]
 
-            # Initialise per-S1 top-K accumulators
-            # Each entry: (target_indices_array, scores_array)
-            best_indices = [np.empty(0, dtype=np.int64)
-                            for _ in range(chunk_len)]
-            best_scores = [np.empty(0, dtype=np.float32)
-                           for _ in range(chunk_len)]
+        # Iterate over every target chunk ONCE
+        for t_start in tqdm(range(0, n_targets, target_chunk_size), desc="Target Chunks"):
+            t_end = min(t_start + target_chunk_size, n_targets)
+            target_chunk_texts = target_texts[t_start:t_end]
 
-            # Iterate over every target chunk
-            target_offset = 0
+            # Transform this target chunk and transpose
+            target_matrix = vectorizer.transform(target_chunk_texts)
+            target_matrix_T = target_matrix.T.tocsr()
 
-            for t_start in range(0, n_targets, target_chunk_size):
-                t_end = min(t_start + target_chunk_size, n_targets)
-                target_chunk_texts = target_texts[t_start:t_end]
-
-                # Transform this target chunk
-                target_matrix = vectorizer.transform(
-                    target_chunk_texts
-                )
+            for chunk_idx, s1_start in enumerate(range(0, n_s1, s1_chunk_size)):
+                s1_end = min(s1_start + s1_chunk_size, n_s1)
+                chunk_len = s1_end - s1_start
+                s1_matrix = s1_matrices[chunk_idx]
 
                 # Sparse top-K: s1_matrix @ target_matrix.T
-                # Result shape: (chunk_len, t_end - t_start)
                 sim_block = sp_matmul_topn(
                     s1_matrix,
-                    target_matrix.T,
+                    target_matrix_T,
                     top_n=top_k,
                     threshold=0.05,
                     sort=True,
@@ -242,7 +237,7 @@ def generate_candidates(
 
                 sim_block = sim_block.tocsr()
 
-                # Merge per-S1 results into running top-K
+                # Merge per-S1 results into global running top-K
                 for row in range(chunk_len):
                     row_start = sim_block.indptr[row]
                     row_end = sim_block.indptr[row + 1]
@@ -250,59 +245,48 @@ def generate_candidates(
                     if row_start == row_end:
                         continue
 
-                    # Column indices are local to this target chunk;
-                    # shift them to global target indices.
+                    # Column indices are local to this target chunk
                     local_cols = sim_block.indices[
                         row_start:row_end
                     ].astype(np.int64)
                     global_cols = local_cols + t_start
-
                     scores = sim_block.data[
                         row_start:row_end
                     ].astype(np.float32)
 
-                    best_indices[row], best_scores[row] = _merge_topk(
-                        best_indices[row],
-                        best_scores[row],
+                    global_row = s1_start + row
+                    best_indices[global_row], best_scores[global_row] = _merge_topk(
+                        best_indices[global_row],
+                        best_scores[global_row],
                         global_cols,
                         scores,
                         top_k,
                     )
 
-                del target_matrix, sim_block, target_chunk_texts
-                gc.collect()
-
-            # -------------------------------------------------
-            # Emit global top-K for this S1 chunk
-            # -------------------------------------------------
-
-            for row in range(chunk_len):
-                if len(best_indices[row]) == 0:
-                    continue
-
-                s1_id = s1_chunk_ids[row]
-
-                for g_idx, sc in zip(
-                    best_indices[row],
-                    best_scores[row],
-                ):
-                    country_s1_ids.append(s1_id)
-                    country_target_ids.append(
-                        target_ids[g_idx]
-                    )
-                    country_scores.append(float(sc))
-
-            del s1_matrix, best_indices, best_scores
-            del s1_chunk_texts, s1_chunk_ids
+            del target_matrix, target_matrix_T, target_chunk_texts
             gc.collect()
 
-            print(
-                f"    S1 chunk "
-                f"{s1_start // s1_chunk_size + 1}/"
-                f"{n_s1_chunks} done  "
-                f"(rows {s1_start}..{s1_end - 1})"
-            )
+        # -------------------------------------------------
+        # Emit global top-K for all S1 entities
+        # -------------------------------------------------
 
+        for row in range(n_s1):
+            if len(best_indices[row]) == 0:
+                continue
+
+            s1_id = s1_ids[row]
+
+            for g_idx, sc in zip(
+                best_indices[row],
+                best_scores[row],
+            ):
+                country_s1_ids.append(s1_id)
+                country_target_ids.append(
+                    target_ids[g_idx]
+                )
+                country_scores.append(float(sc))
+
+        del s1_matrices, best_indices, best_scores
         del s1_texts, target_texts, s1_ids, target_ids
         del vectorizer
         gc.collect()

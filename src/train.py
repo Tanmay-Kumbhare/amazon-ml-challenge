@@ -1,7 +1,9 @@
+import os
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
+from src import config
 
 def f05_macro_per_s1(y_true_dict, y_pred_dict):
     """
@@ -71,11 +73,13 @@ def tune_threshold(val_df, val_probs, true_dict):
     print(f"Optimal Threshold: {best_thresh:.2f}, Validation Macro F0.5: {best_f05:.4f}")
     return best_thresh
 
-def train_model(df_features, df_gt, params):
+def train_model(df_features, df_gt, params, all_s1_entities=None):
     """
     Trains a LightGBM model using leakage-free group splits.
     df_features must have source1_id, target_id, and feature columns.
     df_gt must be the raw ground truth DataFrame (loaded with keep_default_na=False).
+    all_s1_entities is an optional array/Series of all S1 entity IDs sampled for training,
+    ensuring zero-candidate S1 entities are represented in validation split and threshold tuning.
     """
     print("Preparing training data...")
     
@@ -114,12 +118,31 @@ def train_model(df_features, df_gt, params):
     neg_count = len(is_match) - pos_count
     print(f"Positive pairs: {pos_count:,} | Negative pairs: {neg_count:,}")
     
-    # Split by source1_id to prevent data leakage. Convert to list to avoid PyArrow/Sklearn indexing bugs.
-    unique_s1 = list(df_features['source1_id'].unique())
+    # Features to use: exact 11 columns in deterministic order
+    feature_cols = [
+        'name_jaro_winkler',
+        'name_levenshtein',
+        'name_len_diff',
+        'name_token_jaccard',
+        'name_exact_match',
+        'address_jaro_winkler',
+        'address_levenshtein',
+        'address_len_diff',
+        'address_token_jaccard',
+        'address_exact_match',
+        'blocking_score'
+    ]
+
+    # Split by source1_id to prevent data leakage.
+    # Grouped split using all sampled S1 entities so zero-candidate entities are represented.
+    if all_s1_entities is not None:
+        unique_s1 = list(pd.unique(all_s1_entities))
+    else:
+        unique_s1 = list(df_features['source1_id'].unique())
     train_s1, val_s1 = train_test_split(unique_s1, test_size=0.2, random_state=42)
     
-    # Prepare validation true dict (only those validation S1s actually seen in df_features)
-    val_true_dict = {s1: all_true_dict[s1] for s1 in val_s1 if s1 in all_true_dict}
+    # Prepare validation true dict for ALL validation S1 entities (including zero-candidate S1s)
+    val_true_dict = {s1: all_true_dict.get(s1, set()) for s1 in val_s1}
     
     train_s1_set = set(train_s1)
     val_s1_set = set(val_s1)
@@ -127,11 +150,10 @@ def train_model(df_features, df_gt, params):
     train_mask = df_features['source1_id'].isin(train_s1_set)
     val_mask = df_features['source1_id'].isin(val_s1_set)
     
-    drop_cols = ['source1_id', 'target_id', 'is_match', 'blocking_score']
-    X_train = df_features[train_mask].drop(drop_cols, axis=1, errors='ignore')
+    X_train = df_features[train_mask][feature_cols]
     y_train = df_features[train_mask]['is_match']
     
-    X_val = df_features[val_mask].drop(drop_cols, axis=1, errors='ignore')
+    X_val = df_features[val_mask][feature_cols]
     y_val = df_features[val_mask]['is_match']
     
     print(f"Train size: {len(X_train)} | Val size: {len(X_val)}")

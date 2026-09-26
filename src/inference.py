@@ -6,7 +6,20 @@ def predict_test(model, df_features, best_thresh):
     Predicts matches on the test set features using the trained model and best threshold.
     """
     print("Running inference on test pairs...")
-    X_test = df_features.drop(['source1_id', 'target_id', 'blocking_score'], axis=1, errors='ignore')
+    feature_cols = [
+        'name_jaro_winkler',
+        'name_levenshtein',
+        'name_len_diff',
+        'name_token_jaccard',
+        'name_exact_match',
+        'address_jaro_winkler',
+        'address_levenshtein',
+        'address_len_diff',
+        'address_token_jaccard',
+        'address_exact_match',
+        'blocking_score'
+    ]
+    X_test = df_features[feature_cols]
     
     probs = model.predict(X_test)
     preds = (probs > best_thresh).astype(int)

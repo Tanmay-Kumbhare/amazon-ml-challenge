@@ -1,0 +1,38 @@
+# Dataset - DO NOT COMMIT
+dataset/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+
+# Model files
+models/
+*.pkl
+*.joblib
+*.bin
+*.pt
+*.pth
+
+# Generated outputs
+output/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

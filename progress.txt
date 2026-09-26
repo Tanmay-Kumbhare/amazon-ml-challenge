@@ -1,0 +1,64 @@
+================================================================================
+                    AMAZON ML CHALLENGE: BUSINESS ENTITY RESOLUTION
+                               PROGRESS & ROADMAP LOG
+================================================================================
+Date: 2026-09-25
+Hardware Target: Lenovo LOQ (Intel i5-13450HX, 16GB RAM, NVIDIA RTX 3050 6GB GPU)
+Status: Infrastructure Built & GPU Optimization Prepared
+
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & RECONNAISSANCE FINDINGS
+--------------------------------------------------------------------------------
+- Inspected full dataset in dataset/train/ and dataset/test/ without modifying raw files.
+- Dataset sizes:
+  * train_source1.tsv: 2,206,821 rows (~200MB) [Anchor Source]
+  * train_source2.tsv: 5,034,616 rows (~466MB) [Noisy: ALL CAPS, Hindi script, ~169k missing addresses]
+  * train_source3.tsv: 5,285,603 rows (~480MB) [Noisy: Domain names, typos, ~176k missing addresses]
+  * train_ground_truth.tsv: 2,206,821 S1 entities, 7,638,365 matched pairs
+  * test_source1.tsv: 1,732,544 rows (~167MB)
+  * test_source2.tsv: 4,887,273 rows (~486MB)
+  * test_source3.tsv: 5,082,316 rows (~483MB)
+
+- Key Ground Truth Analysis:
+  * Singletons (0 matches): 123,247 S1 entities
+  * 1 Match: 119,157 S1 entities
+  * Multiple Matches (>1): 1,964,417 S1 entities (max matches for 1 S1 entity = 11)
+
+--------------------------------------------------------------------------------
+2. KEY ARCHITECTURAL DECISIONS & CONSTRAINTS AGREED UPON
+--------------------------------------------------------------------------------
+[DECISION 1: OPEN-SET COUNTRY HANDLING]
+- Observation: Training set has 'US' and 'India'. Test set introduces 'France'.
+- Strategy: We DO NOT train ML models on Country as a feature (to avoid model panic on 'France'). Instead, Country is used strictly as a HARD BLOCKING RULE (only matching S1 records against S2/S3 records in the same country).
+
+[DECISION 2: LEAKAGE-FREE LOCAL VALIDATION]
+- Strategy: Hold out 20% of Source 1 entities in a group split. Validate strictly using F0.5 score locally before submitting to Amazon's test cases to preserve leaderboard rank.
+
+[DECISION 3: MULTI-PARAMETER & GENTLE CLEANING]
+- Strategy: Avoid over-cleaning addresses (keep numbers and unique tokens) so we don't accidentally merge different branches of franchises (e.g. McDonald's). Evaluate candidate pairs across all parameters (Name JW/Levenshtein/Jaccard + Address JW/Levenshtein/Jaccard + Blocking Score).
+
+[DECISION 4: GPU ACCELERATION & MEMORY SAFETY]
+- Strategy: Hardware features an RTX 3050 GPU (6GB VRAM) and 16GB RAM.
+- Optimization: 
+  1. TF-IDF + PyTorch CUDA GPU matrix multiplication for lightning-fast Top-K cosine similarity search.
+  2. Batching/streaming candidate pair generation to prevent RAM OOM (Out Of Memory) errors.
+
+--------------------------------------------------------------------------------
+3. PROJECT CODEBASE STRUCTURE BUILT
+--------------------------------------------------------------------------------
+- DATASET_RECONNAISSANCE.md: Comprehensive initial report detailing field statistics and noise.
+- src/config.py: Hyperparameters, directory paths, LightGBM parameters.
+- src/preprocess.py: Gentle text normalization, legal suffix standardization (pvt -> private, etc.).
+- src/blocking.py & src/blocking_gpu.py: Candidate pair generation (Country partition + TF-IDF Top-K via CPU/GPU).
+- src/features.py: Pairwise similarity features (Jaro-Winkler, Levenshtein, Token Jaccard, Exact Match, Length Diff).
+- src/train.py: Group 80/20 train-val split, custom F0.5 evaluation metric, threshold optimizer.
+- src/inference.py: Test set prediction and formatted output generator (candidate_pairs.tsv, matching_results.tsv).
+- main.py: End-to-end pipeline orchestrator.
+
+--------------------------------------------------------------------------------
+4. CURRENT STATUS & NEXT STEPS
+--------------------------------------------------------------------------------
+- Complete code structure written and syntax-checked (`py_compile` passed clean).
+- Machine learning environment dependencies (`scikit-learn`, `lightgbm`, `xgboost`, `jellyfish`, `pyarrow`) installed.
+- Next Step: Execute the pipeline using GPU-accelerated PyTorch blocking and train the F0.5 optimized LightGBM model.
+================================================================================
